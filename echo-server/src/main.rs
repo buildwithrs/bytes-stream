@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use bytes_stream::protocol::{process, read_frame};
+use echo_server::protocol::{process, read_frame};
 use bytes::BytesMut;
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
@@ -9,8 +9,6 @@ use tokio::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("Hello, world!");
-
     let addr = "0.0.0.0:8989";
     let listender = TcpListener::bind(addr).await?;
     println!("server listen on: {}", addr);
@@ -30,6 +28,8 @@ async fn handle_connection(stream: &mut TcpStream, remote: SocketAddr) -> io::Re
     println!("handle stream for: {:?}", remote);
     let mut buf = BytesMut::with_capacity(8 * 1024);
     loop {
+        buf.clear();
+        
         let n = stream.read_buf(&mut buf).await?;
         if n == 0 {
             break; // client closed
