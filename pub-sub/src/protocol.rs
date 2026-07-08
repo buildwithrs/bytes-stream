@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, time::SystemTime};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -7,6 +7,7 @@ use crate::errors::AppError;
 pub const PUB_TAG: u8 = 0x01;
 pub const SUB_TAG: u8 = 0x03;
 pub const MSG_TAG: u8 = 0x05;
+pub const ACK_TAG: u8 = 0x99;
 
 pub const MAX_TOPIC_LEN: u8 = 50;
 pub const MAX_CHAN_LEN: u8 = 50;
@@ -37,11 +38,29 @@ pub struct Message {
     pub body: Vec<u8>,
 }
 
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct SuccessACK {
+    pub tag: u8,
+    pub msg: Vec<u8>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Event {
     Pub(PubEvent),
     Sub(SubEvent),
     Message(Message),
+    ACK(SuccessACK),
+}
+
+impl Event {
+    pub fn tag(&self) -> u8 {
+        match self {
+            Event::Pub(_) => PUB_TAG,
+            Event::Sub(_) => SUB_TAG,
+            Event::Message(_) => MSG_TAG,
+            Event::ACK(_) => ACK_TAG,
+        }
+    }
 }
 
 impl fmt::Display for Event {
@@ -77,6 +96,14 @@ impl fmt::Display for Event {
                     f,
                     "Message {{ id: {}, ts: {}, from: {}, body: {} }}",
                     id, ts, from, payload
+                )
+            }
+            Event::ACK(SuccessACK { tag, msg }) => {
+                let msg_content = String::from_utf8_lossy(msg);
+                write!(
+                    f,
+                    "SuccessACK {{ tag: {}, msg: {}}}",
+                    tag, msg_content
                 )
             }
         }
@@ -137,6 +164,18 @@ pub fn encode_msg(msg: Message) -> Bytes {
     writer.freeze()
 }
 
+pub fn encode_sucess_ack(ack: SuccessACK) -> Bytes {
+    let mut out = Vec::new();
+    out.put_u8(ACK_TAG);
+    out.put_u8(ack.tag);
+    out.extend_from_slice(&ack.msg);
+
+    let mut writer = BytesMut::with_capacity(4 + out.len());
+    writer.put_u32(out.len() as u32);
+    writer.extend_from_slice(&out);
+    writer.freeze()
+}
+
 pub fn read_frame(buf: &mut BytesMut) -> Option<BytesMut> {
     if buf.len() < HEADER_LEN {
         return None;
@@ -157,6 +196,7 @@ pub fn decode_frame(f: &mut BytesMut) -> Result<Event, AppError> {
         PUB_TAG => decode_pub(f),
         SUB_TAG => decode_sub(f),
         MSG_TAG => decode_msg(f),
+        ACK_TAG => decode_ack(f),
         _ => Err(AppError::UnknownEvent(tag)),
     }
 }
@@ -182,7 +222,7 @@ fn decode_sub(bs: &mut BytesMut) -> Result<Event, AppError> {
     let c_id = bs.get_u64();
     let t_len = bs.get_u8() as usize;
     let topic = String::from_utf8_lossy(bs.get(0..t_len).unwrap());
-    let channel = String::from_utf8_lossy(&bs[t_len + 1..]);
+    let channel = String::from_utf8_lossy(&bs[t_len..]);
 
     Ok(Event::Sub(SubEvent {
         client_id: c_id,
@@ -200,11 +240,25 @@ fn decode_msg(bs: &mut BytesMut) -> Result<Event, AppError> {
     Ok(Event::Message(Message { id, ts, from, body }))
 }
 
+fn decode_ack(bs: &mut BytesMut) -> Result<Event, AppError> {
+    let tag = bs.get_u8();
+    let msg = bs[..].to_vec();
+
+    Ok(Event::ACK(SuccessACK { tag, msg }))
+}
+
 pub fn process(payload: Bytes) -> Bytes {
     let mut writer = BytesMut::with_capacity(4 + payload.len());
     writer.put_u32(payload.len() as u32);
     writer.extend_from_slice(&payload);
     writer.freeze()
+}
+
+pub fn new_ts() -> u64 {
+    let ts = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    ts.as_secs()
 }
 
 #[cfg(test)]
