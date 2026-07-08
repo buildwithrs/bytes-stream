@@ -89,7 +89,7 @@ pub fn encode_pub(pub_event: PubEvent) -> Bytes {
     let mut out = Vec::new();
 
     out.put_u8(PUB_TAG);
-    out.extend_from_slice(&pub_event.client_id.to_be_bytes());
+    out.put_u64(pub_event.client_id);
 
     out.put_u8(pub_event.topic.len() as u8);
     out.extend_from_slice(&pub_event.topic.into_bytes());
@@ -98,7 +98,9 @@ pub fn encode_pub(pub_event: PubEvent) -> Bytes {
     out.extend_from_slice(&pub_event.channel.into_bytes());
     out.extend_from_slice(&pub_event.msg);
 
-    let mut writer = BytesMut::with_capacity(4 + 9000);
+    println!("out buf: {:?}", out);
+
+    let mut writer = BytesMut::with_capacity(4 + out.len());
     writer.put_u32(out.len() as u32);
     writer.extend_from_slice(&out);
     writer.freeze()
@@ -162,11 +164,11 @@ pub fn decode_frame(f: &mut BytesMut) -> Result<Event, AppError> {
 fn decode_pub(bs: &mut BytesMut) -> Result<Event, AppError> {
     let c_id = bs.get_u64();
     let t_len = bs.get_u8() as usize;
-    let topic = String::from_utf8_lossy(bs.get(0..t_len).unwrap());
+    let topic = String::from_utf8_lossy(&bs[0..t_len]);
 
-    let ch_len = *bs.get(t_len).unwrap() as usize;
+    let ch_len = bs[t_len] as usize;
     let channel = String::from_utf8_lossy(&bs[t_len + 1..t_len + 1 + ch_len]);
-    let msg = bs[t_len + ch_len + 2..].to_vec();
+    let msg = bs[t_len + ch_len + 1..].to_vec();
 
     Ok(Event::Pub(PubEvent {
         client_id: c_id,
@@ -224,7 +226,7 @@ mod tests {
             msg: b"orders:001".to_vec(),
         };
 
-        let bs = encode_pub(pub_ev);
+        let bs = encode_pub(pub_ev.clone());
         println!("pub bs: {:?}", bs);
 
         let mut mut_bs = BytesMut::from(bs);
@@ -236,7 +238,8 @@ mod tests {
         let decode_pub_ev = decode_frame(&mut frame);
         println!("decode_pub_ev: {:?}", decode_pub_ev);
         assert!(decode_pub_ev.is_ok());
-        println!("pub evenet: {}", decode_pub_ev.unwrap());
+        assert_eq!(Event::Pub(pub_ev), decode_pub_ev.unwrap());
+        // println!("pub evenet: {}", decode_pub_ev.unwrap());
     }
 
     #[test]
@@ -262,5 +265,11 @@ mod tests {
         let msg1 = decode_msg.unwrap();
         assert_eq!(Event::Message(msg), msg1);
         println!("decode_msg: {}", msg1);
+    }
+
+    #[test]
+    fn u8_2_hex() {
+        let n1 = 233 as u8;
+        println!("{:x}", n1);
     }
 }
